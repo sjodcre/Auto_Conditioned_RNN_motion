@@ -71,20 +71,23 @@ class acLSTM(nn.Module):
     #in cuda tensor real_seq: b*seq_len*frame_size
     #out cuda tensor out_seq  b* (seq_len*frame_size)
     def forward(self, real_seq, condition_num=5, groundtruth_num=5):
-        
+               #real_seq dim = 32,100,171
         batch=real_seq.size()[0]
+        #batch =32
         seq_len=real_seq.size()[1]
-        
+        #seq_len=100
         condition_lst=self.get_condition_lst(condition_num, groundtruth_num, seq_len)
-        
+        print('condition_lst: ',len(condition_lst))
         #initialize vec_h vec_m #set as 0
         (vec_h, vec_c) = self.init_hidden(batch)
-        
+        #vec_h=[(32,171),(32,171),(32,171)]
         out_seq = torch.autograd.Variable(torch.FloatTensor(  np.zeros((batch,1))   ).cuda())
-
+        print('out_seq: ',out_seq.size())
+        #out_deq =32,1
         out_frame=torch.autograd.Variable(torch.FloatTensor(  np.zeros((batch,self.out_frame_size))  ).cuda())
-        
-        
+        print('out_frame: ',out_frame.size())
+        #out_frame=32,171
+        print('testing: ',real_seq.size()[2])        
         for i in range(seq_len):
             
             if(condition_lst[i]==1):##input groundtruth frame
