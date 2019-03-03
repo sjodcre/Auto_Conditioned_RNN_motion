@@ -71,7 +71,7 @@ class acLSTM(nn.Module):
     #in cuda tensor real_seq: b*seq_len*frame_size
     #out cuda tensor out_seq  b* (seq_len*frame_size)
     def forward(self, real_seq, condition_num=5, groundtruth_num=5):
-               #real_seq dim = 32,100,171
+        #real_seq dim = 32,100,171
         batch=real_seq.size()[0]
         #batch =32
         seq_len=real_seq.size()[1]
@@ -87,18 +87,21 @@ class acLSTM(nn.Module):
         out_frame=torch.autograd.Variable(torch.FloatTensor(  np.zeros((batch,self.out_frame_size))  ).cuda())
         print('out_frame: ',out_frame.size())
         #out_frame=32,171
-        print('testing: ',real_seq.size()[2])        
+        print('testing: ',real_seq.size()[2])
         for i in range(seq_len):
-            
+            #for each frame
             if(condition_lst[i]==1):##input groundtruth frame
                 in_frame=real_seq[:,i]
+                #size = 32,171, becaus eonly take one row, depending on i, have 100 row due to seq_len
             else:
                 in_frame=out_frame
             
             (out_frame, vec_h,vec_c) = self.forward_lstm(in_frame, vec_h, vec_c)
     
             out_seq = torch.cat((out_seq, out_frame),1)
-    
+            print('out_seq: ',out_seq.size())
+            #[32,172]...then [32,343]...then[32,514], starting column is 0 from initialization
+            #the first column is not returned
         return out_seq[:, 1: out_seq.size()[1]]
     
     #cuda tensor out_seq batch*(seq_len*frame_size)
@@ -112,27 +115,47 @@ class acLSTM(nn.Module):
 
 #numpy array real_seq_np: batch*seq_len*frame_size
 def train_one_iteraton(real_seq_np, model, optimizer, iteration, save_dance_folder, print_loss=False, save_bvh_motion=True):
+    #train_one_iteraton(dance_batch_np, model, optimizer, iteration, write_bvh_motion_folder, print_loss, save_bvh_motion)
+    #for last and 3rd last parameter, i think if last is True, then write bvh to 3rd last folder
+    #dance_batch_np dim =(32,102,171)
+    print('data input dim: ',real_seq_np.shape)
 
     #set hip_x and hip_z as the difference from the future frame to current frame
     dif = real_seq_np[:, 1:real_seq_np.shape[1]] - real_seq_np[:, 0: real_seq_np.shape[1]-1]
+    #for all of the batch( 0 to 31), take 2nd dim from 1:end minus 0:end-1, as u can see it is using one less in this dim. e.g. 1:end and 0:end-1
+    print('dif: ',dif.shape)
     real_seq_dif_hip_x_z_np = real_seq_np[:, 0:real_seq_np.shape[1]-1].copy()
+    #copy original values, from 0: end-1
     real_seq_dif_hip_x_z_np[:,:,Hip_index*3]=dif[:,:,Hip_index*3]
     real_seq_dif_hip_x_z_np[:,:,Hip_index*3+2]=dif[:,:,Hip_index*3+2]
+    #as the top there, change the hip_x and hip_z as the difference from the future frame to the current frame
     
     
     real_seq  = torch.autograd.Variable(torch.FloatTensor(real_seq_dif_hip_x_z_np.tolist()).cuda() )
- 
+    #convert back to real_seq
+    #real_seq dim = 32,101,171
+    print('real_seq: ',real_seq.size())
     seq_len=real_seq.size()[1]-1
+    
+    #seq_len= 101-1=100
+    print('seq_len in train one interation: ',seq_len)
     in_real_seq=real_seq[:, 0:seq_len]
+    #in_real_seq dim = 32,100,171
+    print('in_real_seq: ', in_real_seq.size())
+    #means disregard the last frame?
     
     
     predict_groundtruth_seq= torch.autograd.Variable(torch.FloatTensor(real_seq_dif_hip_x_z_np[:,1:seq_len+1].tolist())).cuda().view(real_seq_np.shape[0],-1)
-   
-   
+    #the groundtruth that is needed to be predicted, which is the next frame, that is why its 1:seq_len+1 ==1:end for real_seq
+    #predict_groundtruth_seq dim = 32,17100
+    #.cuda sends the variable to cud, .view changes the dimensions
+    print('predict_groundtruth_seq: ',predict_groundtruth_seq.shape)
     
     predict_seq = model.forward(in_real_seq, Condition_num, Groundtruth_num)
+    #condition num = 5, groundtruth= 5
     
     optimizer.zero_grad()
+    #Clears the gradients of all optimized
     
     loss=model.calculate_loss(predict_seq, predict_groundtruth_seq)
     
@@ -142,7 +165,8 @@ def train_one_iteraton(real_seq_np, model, optimizer, iteration, save_dance_fold
     
     if(print_loss==True):
         print ("###########"+"iter %07d"%iteration +"######################")
-        print ("loss: "+str(loss.data.tolist()[0]))
+        print(loss.data.tolist())
+        print ("loss: "+str(loss.data.tolist()))
 
     
     if(save_bvh_motion==True):
@@ -178,11 +202,14 @@ def train_one_iteraton(real_seq_np, model, optimizer, iteration, save_dance_fold
 def get_dance_len_lst(dances):
     len_lst=[]
     for dance in dances:
-        #length=len(dance)/100
+        #length=int(len(dance)/100)
         length = 10
+        #length of 10 is used
         if(length<1):
             length=1              
         len_lst=len_lst+[length]
+
+    print('len_lst: ',len_lst)
     
     index_lst=[]
     index=0
@@ -190,28 +217,37 @@ def get_dance_len_lst(dances):
         for i in range(length):
             index_lst=index_lst+[index]
         index=index+1
+
+    print('index_lst: ',index_lst)
+    #length is 10, so each dance index is repeated 10 times as it is a constant
     return index_lst
 
 #input dance_folder name
 #output a list of dances.
 def load_dances(dance_folder):
     dance_files=os.listdir(dance_folder)
+    #list inside the dance_folder which is inside "../train_data_xyz/indian/"
     dances=[]
     for dance_file in dance_files:
         print ("load "+dance_file)
         dance=np.load(dance_folder+dance_file)
         print ("frame number: "+ str(dance.shape[0]))
+        #row (shape0[0]) is no. of frames, column is coordinates in each frame
         dances=dances+[dance]
+        #accumulate all the dance into dances
+    #print('dances',dances)
+    #dances at the end is length of 15, each of the element in the list is an array of the coordinates of the particular dance
     return dances
     
 # dances: [dance1, dance2, dance3,....]
 def train(dances, frame_rate, batch, seq_len, read_weight_path, write_weight_folder, write_bvh_motion_folder, total_iter=500000):
-    
+    #seq_len=100
     seq_len=seq_len+2
+    #seqlen(_len=1)
     torch.cuda.set_device(0)
+    print('dances size:',len(dances))
+    model = acLSTM()
 
-    model = acLSTM()    
-    
     if(read_weight_path!=""):
         model.load_state_dict(torch.load(read_weight_path))
     
@@ -220,12 +256,14 @@ def train(dances, frame_rate, batch, seq_len, read_weight_path, write_weight_fol
 
     current_lr=0.0001
     optimizer = torch.optim.Adam(model.parameters(), lr=current_lr)
-    
+    #model.parameters are the weight and bias values for the 3 lstm and the 1 linear
+
     model.train()
-    
+    #set it to training mode, though by default it is already True
     #dance_len_lst contains the index of the dance, the occurance number of a dance's index is proportional to the length of the dance
     dance_len_lst=get_dance_len_lst(dances)
     random_range=len(dance_len_lst)
+    print('length of dance_len_lst: ',dance_len_lst)
     
     speed=frame_rate/30 # we train the network with frame rate of 30
     
@@ -235,21 +273,40 @@ def train(dances, frame_rate, batch, seq_len, read_weight_path, write_weight_fol
         for b in range(batch):
             #randomly pick up one dance. the longer the dance is the more likely the dance is picked up
             dance_id = dance_len_lst[np.random.randint(0,random_range)]
+            #random based on the length of the dance list, which in this default case is all equally likely as it is a constant 10*15
             dance=dances[dance_id].copy()
+
             dance_len = dance.shape[0]
+            #recall shape[0] is the total frames
             
             start_id=random.randint(10, dance_len-seq_len*speed-10)#the first and last several frames are sometimes noisy. 
+            #e.g. randint(10,2212-100*2-10), tbe 100*2 is for the next part (for loop)
             sample_seq=[]
             for i in range(seq_len):
+            #i in range(102)
                 sample_seq=sample_seq+[dance[int(i*speed+start_id)]]
+                #sample_seq=sample_seq+[(0,2,4,...)+start_id]
             
             #augment the direction and position of the dance
             T=[0.1*(random.random()-0.5),0.0, 0.1*(random.random()-0.5)]
+            #xyz?
             R=[0,1,0,(random.random()-0.5)*np.pi*2]
+            print('T: ',T)
+            print('R: ',R)
+            print('sample_seq: ',np.array(sample_seq).shape)
+            #sample_seq (a list) length is 102, and each of the 102 is an array of the coordinates
+            #he did 102 is because of the augment train data function is it??
+            #highly likely 
             sample_seq_augmented=read_bvh.augment_train_data(sample_seq, T, R)
             dance_batch=dance_batch+[sample_seq_augmented]
-            
+            print('sample_seq_augmented: ',sample_seq_augmented )
+            print(type(sample_seq_augmented))
+            #sample_seq_augmented dim = (102,171)
+            print('dance_batch: ',len(dance_batch))
+            #length is 32 since batch is 32    
         dance_batch_np=np.array(dance_batch)
+        print('dance_batch_np: ',dance_batch_np.shape)
+        #dance_batch_np dim =(32,102,171)
        
         
         print_loss=False
