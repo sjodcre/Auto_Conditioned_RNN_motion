@@ -73,7 +73,7 @@ class acLSTM(nn.Module):
     def forward(self, initial_seq, generate_frames_number):
         
         batch=initial_seq.size()[0]
-        
+        #batch=5
         
         #initialize vec_h vec_m #set as 0
         (vec_h, vec_c) = self.init_hidden(batch)
@@ -89,6 +89,7 @@ class acLSTM(nn.Module):
             (out_frame, vec_h,vec_c) = self.forward_lstm(in_frame, vec_h, vec_c)
     
             out_seq = torch.cat((out_seq, out_frame),1)
+            print('out_seq in first loop: ',out_seq.size())
         
         for i in range(generate_frames_number):
             
@@ -97,7 +98,10 @@ class acLSTM(nn.Module):
             (out_frame, vec_h,vec_c) = self.forward_lstm(in_frame, vec_h, vec_c)
     
             out_seq = torch.cat((out_seq, out_frame),1)
+            print('out_seq in second loop: ',out_seq.size())
     
+        print('out_seq: ',out_seq.size())
+        #out_seq= 5,70795 (70795=171*(14+400)+1 the first frame, but first one will not be returned)
         return out_seq[:, 1: out_seq.size()[1]]
     
     #cuda tensor out_seq batch*(seq_len*frame_size)
@@ -112,19 +116,26 @@ class acLSTM(nn.Module):
 #numpy array inital_seq_np: batch*seq_len*frame_size
 #return numpy b*generate_frames_number*frame_data
 def generate_seq(initial_seq_np, generate_frames_number, model, save_dance_folder):
-
+    #dance_batch_np dim =(5,15,171)
     #set hip_x and hip_z as the difference from the future frame to current frame
     dif = initial_seq_np[:, 1:initial_seq_np.shape[1]] - initial_seq_np[:, 0: initial_seq_np.shape[1]-1]
+    #for all of the batch( 0 to 4), take 2nd dim from 1:end minus 0:end-1, as u can see it is using one less in this dim. e.g. 1:end and 0:end-1
+    print('dif: ',dif.shape)
     initial_seq_dif_hip_x_z_np = initial_seq_np[:, 0:initial_seq_np.shape[1]-1].copy()
+    #copy original values, from 0: end-1
     initial_seq_dif_hip_x_z_np[:,:,Hip_index*3]=dif[:,:,Hip_index*3]
     initial_seq_dif_hip_x_z_np[:,:,Hip_index*3+2]=dif[:,:,Hip_index*3+2]
+    #as the top there, change the hip_x and hip_z as the difference from the future frame to the current frame
     
     
     initial_seq  = torch.autograd.Variable(torch.FloatTensor(initial_seq_dif_hip_x_z_np.tolist()).cuda() )
- 
+    print('initial_seq: ',initial_seq.size())
+    #initial_seq = 5,14,171
     predict_seq = model.forward(initial_seq, generate_frames_number)
     
     batch=initial_seq_np.shape[0]
+    print('batch: ',batch)
+    #batch=5
    
     for b in range(batch):
         
@@ -166,13 +177,17 @@ def get_dance_len_lst(dances):
 #output a list of dances.
 def load_dances(dance_folder):
     dance_files=os.listdir(dance_folder)
+    #list inside the dance_folder which is inside "../train_data_xyz/indian/"
     dances=[]
     for dance_file in dance_files:
         print ("load "+dance_file)
         dance=np.load(dance_folder+dance_file)
         print ("frame number: "+ str(dance.shape[0]))
+        #row (shape0[0]) is no. of frames, column is coordinates in each frame
         dances=dances+[dance]
+        #accumulate all the dance into dances
     return dances
+    #dances at the end is length of 15, each of the element in the list is an array of the coordinates of the particular dance
     
 # dances: [dance1, dance2, dance3,....]
 def test(dance_batch_np, frame_rate, batch, initial_seq_len, generate_frames_number, read_weight_path, write_bvh_motion_folder):
@@ -182,6 +197,7 @@ def test(dance_batch_np, frame_rate, batch, initial_seq_len, generate_frames_num
     model = acLSTM()    
     
     model.load_state_dict(torch.load(read_weight_path))
+    #load weights and biases
     
     model.cuda()
     
@@ -189,7 +205,7 @@ def test(dance_batch_np, frame_rate, batch, initial_seq_len, generate_frames_num
     #dance_len_lst contains the index of the dance, the occurance number of a dance's index is proportional to the length of the dance
     dance_len_lst=get_dance_len_lst(dances)
     random_range=len(dance_len_lst)
-    
+    #both same as training
     speed=frame_rate/30 # we train the network with frame rate of 30
     
     
@@ -197,24 +213,33 @@ def test(dance_batch_np, frame_rate, batch, initial_seq_len, generate_frames_num
     for b in range(batch):
         #randomly pick up one dance. the longer the dance is the more likely the dance is picked up
         dance_id = dance_len_lst[np.random.randint(0,random_range)]
+        #random based on the length of the dance list, which in this default case is all equally likely as it is a constant 10*15
         dance=dances[dance_id].copy()
         dance_len = dance.shape[0]
+        #recall shape[0] is the total frames
             
         start_id=random.randint(10, int(dance_len-initial_seq_len*speed-10))#the first and last several frames are sometimes noisy. 
+        #e.g. randint(10,2212-15*2-10), tbe 15*2 is for the next part (for loop)
         sample_seq=[]
         for i in range(initial_seq_len):
+        #i in range(15)    
             sample_seq=sample_seq+[dance[int(i*speed+start_id)]]
+            #sample_seq=sample_seq+[(0,2,4,...)+start_id]
         
         dance_batch=dance_batch+[sample_seq]
-            
+        print('sample_seq: ',len(sample_seq))
+        #sample_seq (a list) length is 15, and each of the 102 is an array of the coordinates
+        print('dance_batch: ',len(dance_batch))
+        #length is 5 since batch is 5      
     dance_batch_np=np.array(dance_batch)
-       
+    print('dance_batch_np: ',dance_batch_np.shape)
+    #dance_batch_np dim =(5,15,171)   
     generate_seq(dance_batch_np, generate_frames_number, model, write_bvh_motion_folder)
     
 
         
 
-read_weight_path="../train_weight_aclstm_indian/0086000.weight"
+read_weight_path="../train_weight_aclstm_indian/0000000.weight"
 write_bvh_motion_folder="../test_bvh_aclstm_indian/"
 dances_folder = "../train_data_xyz/indian/"
 dance_frame_rate=60
